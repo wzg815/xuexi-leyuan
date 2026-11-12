@@ -34,13 +34,33 @@
     tick() { tone(1200, 0.03, { type: 'square', vol: 0.04 }); },
     pop() { tone(880, 0.08, { type: 'sine', vol: 0.12, slide: 300 }); }
   };
-  // ---- 朗读 ----
+  // ---- 朗读：优先播放预生成的 mp3（audio/），speechSynthesis 仅作兜底 ----
+  const SILENT = 'data:audio/mpeg;base64,SUQzBAAAAAAAIlRTU0UAAAAOAAADTGF2ZjYxLjcuMTAzAAAAAAAAAAAAAAD/84TAAAAAAAAAAAAASW5mbwAAAA8AAAAHAAADYABVVVVVVVVVVVVVVVVVVXFxcXFxcXFxcXFxcXFxjo6Ojo6Ojo6Ojo6Ojo6qqqqqqqqqqqqqqqqqqqrHx8fHx8fHx8fHx8fHx+Pj4+Pj4+Pj4+Pj4+Pj//////////////////8AAAAATGF2YzYxLjE5AAAAAAAAAAAAAAAAJAQgAAAAAAAAA2CZUOnQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/80TEAAAAA0gAAAAATEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVMQU1FMy7/80TEUwAAA0gAAAAAMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVMQU1FMy7/80TEpgAAA0gAAAAAMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVMQU1FMy7/80TErAAAA0gAAAAAMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVMQU1FMy7/80TErAAAA0gAAAAAMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/80TErAAAA0gAAAAAVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/80TErAAAA0gAAAAAVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVU=';
+  const player = new Audio();
+  player.preload = 'auto'; player.setAttribute('playsinline', ''); player.setAttribute('webkit-playsinline', '');
+  let unlocked = false;
+  const log = root.__audioLog = [];
+  function unlockAudio() {
+    ac();
+    if (unlocked) return;
+    try {
+      player.src = SILENT;
+      const p = player.play();
+      if (p && p.then) p.then(() => { unlocked = true; if (player.src === SILENT) player.pause(); }).catch(() => {});
+      else unlocked = true;
+    } catch (e) { }
+  }
+  // iOS Safari / 微信内置浏览器：第一次触摸时解锁
+  ['pointerdown', 'touchend', 'click', 'keydown'].forEach(t => document.addEventListener(t, unlockAudio, { capture: true, passive: true }));
+  function wxUnlock() { try { root.WeixinJSBridge.invoke('getNetworkType', {}, () => unlockAudio()); } catch (e) { unlockAudio(); } }
+  if (root.WeixinJSBridge) wxUnlock(); else document.addEventListener('WeixinJSBridgeReady', wxUnlock, false);
+
   let voices = [];
   const syn = root.speechSynthesis;
   function loadVoices() { try { voices = syn ? syn.getVoices() : []; } catch (e) { voices = []; } }
   if (syn) { loadVoices(); syn.onvoiceschanged = loadVoices; }
-  function speak(text, lang = 'zh-CN') {
-    if (!syn || (root.STORE && !root.STORE.state.settings.voice)) return false;
+  function tts(text, lang) {
+    if (!syn) return false;
     try {
       syn.cancel();
       const u = new SpeechSynthesisUtterance(text);
@@ -51,6 +71,23 @@
       syn.speak(u); return true;
     } catch (e) { return false; }
   }
-  const canSpeak = () => !!syn;
-  root.SFX = SFX; root.SPEAK = { speak, canSpeak, hasLang: l => voices.some(v => v.lang.toLowerCase().startsWith(l)) };
+  function speak(text, lang = 'zh-CN') {
+    if (root.STORE && !root.STORE.state.settings.voice) return false;
+    const file = (root.AUDIO_MAP || {})[lang + '|' + text];
+    if (!file) { log.push({ text, lang, file: null, ok: false, fallback: true }); return tts(text, lang); }
+    const entry = { text, lang, file, ok: null };
+    log.push(entry);
+    try {
+      if (syn) syn.cancel();
+      player.pause();
+      player.src = 'audio/' + file;
+      player.currentTime = 0;
+      const p = player.play();
+      if (p && p.then) p.then(() => { entry.ok = true; unlocked = true; }).catch(err => { entry.ok = false; entry.err = String(err && err.name); tts(text, lang); });
+      else entry.ok = true;
+      return true;
+    } catch (e) { entry.ok = false; return tts(text, lang); }
+  }
+  const canSpeak = () => true;
+  root.SFX = SFX; root.SPEAK = { speak, stop: () => { try { player.pause(); if (syn) syn.cancel(); } catch (e) { } }, canSpeak, unlock: unlockAudio, hasFile: (t, l) => !!(root.AUDIO_MAP || {})[l + '|' + t], hasLang: l => voices.some(v => v.lang.toLowerCase().startsWith(l)) };
 })(self);

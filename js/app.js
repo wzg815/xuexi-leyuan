@@ -193,7 +193,7 @@
     const stage = h('div', { class: 'stage' });
     const root = h('div', { class: 'screen game mode-' + cfg.mode }, head, stage);
     mount(root);
-    current.cleanup = () => { clearInterval(G0.timer); G0.over = true; try { speechSynthesis.cancel(); } catch (e) { } };
+    current.cleanup = () => { clearInterval(G0.timer); G0.over = true; SPEAK.stop(); };
 
     function drawHead() {
       const quit = h('button', { class: 'icon-btn', 'aria-label': '退出', onclick: () => { SFX.click(); if (G0.i === 0 || confirm('确定要退出吗？这一轮的进度不会保存星星奖励哦。')) back(); } }, '✕');
@@ -358,7 +358,7 @@
 
   function renderQuestion(q, answer) {
     const card = h('div', { class: 'qcard kind-' + q.kind, 'data-testid': 'qcard', 'data-skill': q.skill, 'data-kind': q.kind });
-    const top = h('div', { class: 'q-prompt' }, q.speak ? h('button', { class: 'speak-btn', 'aria-label': '朗读', 'data-testid': 'speak', onclick: () => { SFX.unlock(); SPEAK.speak(q.speak.text, q.speak.lang); } }, '🔊') : null, h('span', null, q.prompt));
+    const top = h('div', { class: 'q-prompt' }, q.speak ? h('button', { class: 'speak-btn' + (q.autoSpeak ? ' big' : ''), 'aria-label': '再听一遍', 'data-testid': 'speak', onclick: () => { SFX.unlock(); SPEAK.unlock(); SPEAK.speak(q.speak.text, q.speak.lang); } }, '🔊', q.autoSpeak ? h('small', null, '再听') : null) : null, h('span', null, q.prompt));
     card.append(top);
     if (q.emoji) card.append(h('div', { class: 'deco-emoji' }, q.emoji));
     if (q.visual) card.append(visualNode(q.visual));
@@ -368,7 +368,7 @@
     if (q.bigFrac) card.append(h('div', { class: 'q-big fr' }, fracNode(q.bigFrac[0]), h('span', { class: 'circ' }, '○'), fracNode(q.bigFrac[1])));
     if (q.bigExpr) card.append(h('div', { class: 'q-big fr' }, q.bigExpr.map(t => /\//.test(t) || /^\d+$/.test(t) ? fracNode(t) : h('span', { class: 'op' }, t)), h('span', { class: 'op' }, '= ?')));
     if (q.poemLines) card.append(h('div', { class: 'poem' }, q.poemLines.map(l => h('div', null, l.split(/(＿+)/).map(seg => /＿/.test(seg) ? h('span', { class: 'blank' }, '　'.repeat(seg.length)) : seg)))));
-    if (!SPEAK.canSpeak() && q.speak && q.autoSpeak) card.append(h('p', { class: 'warn-text' }, '此浏览器不支持朗读，请换用 Safari / Chrome 打开'));
+    
     const area = h('div', { class: 'answer-area' }); card.append(area);
     ({ choice: renderChoice, keypad: renderKeypad, numberline: renderLine, drag: renderDrag, sort: renderSort, pair: renderPair })[q.kind](q, area, answer);
     return card;
@@ -564,7 +564,7 @@
       h('div', { class: 'panel' }, h('h4', null, '⚙️ 设置'),
         h('p', null, '每日目标（题数）'), h('div', { class: 'chips' }, [10, 15, 20, 30, 40, 50].map(n => btn(n + '题', 'chip' + (p.goal === n ? ' on' : ''), () => { p.goal = n; S.save(); go('parent', p.id); }, { 'data-testid': 'goal-' + n }))),
         h('p', null, '声音'), h('div', { class: 'chips' }, btn('音效 ' + (st.settings.sound ? '开' : '关'), 'chip' + (st.settings.sound ? ' on' : ''), () => { st.settings.sound = !st.settings.sound; S.save(); go('parent', p.id); }), btn('朗读 ' + (st.settings.voice ? '开' : '关'), 'chip' + (st.settings.voice ? ' on' : ''), () => { st.settings.voice = !st.settings.voice; S.save(); go('parent', p.id); })),
-        h('p', { class: 'muted' }, SPEAK.canSpeak() ? `朗读：中文语音${SPEAK.hasLang('zh') ? '可用' : '未检测到'}，英文语音${SPEAK.hasLang('en') ? '可用' : '未检测到'}。` : '当前浏览器不支持朗读，听音题可点 🔊 无效，建议用 Safari 或 Chrome。'),
+        h('p', { class: 'muted' }, '朗读使用内置录音（无需联网语音）。如果没声音：检查手机静音键/音量，或点题目上的 🔊 再听一遍。'),
         h('div', { class: 'row wrap' }, btn('✏️ 改名字/年级', 'ghost sm', () => addProfileDialog(p)), btn('🧹 清空学习记录', 'ghost sm', () => { if (confirm(`确定清空 ${p.name} 的所有学习记录和星星吗？`)) { const n = S.newProfile(p.name, p.grade, p.avatar, p.bg); n.id = p.id; Object.assign(p, n); S.save(); go('parent', p.id); } }), st.profiles.length > 1 ? btn('🗑️ 删除这个小朋友', 'danger sm', () => { if (confirm(`确定删除 ${p.name} 吗？无法恢复。`)) { st.profiles = st.profiles.filter(x => x.id !== p.id); if (st.current === p.id) st.current = null; S.save(); go('parent'); } }) : null)),
       h('p', { class: 'privacy center' }, '本网站无广告、无第三方统计，所有记录只保存在这台设备的浏览器里。')));
   };
@@ -573,5 +573,9 @@
   // ---------- 启动 ----------
   document.addEventListener('pointerdown', () => SFX.unlock(), { once: true });
   if (S.state.current && S.cur()) go('home'); else go('profiles');
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => { });
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    const hadController = !!navigator.serviceWorker.controller; let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloading && !(current && current.name === 'game')) { reloading = true; location.reload(); } });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => { });
+  }
 })();

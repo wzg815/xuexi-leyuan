@@ -184,3 +184,5 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:0;touch-action:ma
 @media (max-width:520px){.subject-grid{gap:8px}.subj-icon{font-size:36px}.subject-card b{font-size:20px}.kpis{grid-template-columns:repeat(3,1fr)}.res-stats{grid-template-columns:repeat(2,1fr)}.menu-item small{display:none}.pill{padding:6px 9px;font-size:14px}}
 @media (min-width:760px){#app{padding-top:20px}.qcard{padding:26px 30px 30px}.options:not(.long):not(.wide){grid-template-columns:repeat(4,1fr)}.options.pics:not(.long){grid-template-columns:repeat(4,1fr)}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+.speak-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;line-height:1}.speak-btn.big{width:74px;height:74px;font-size:30px}.speak-btn small{font-size:12px;font-weight:800;margin-top:2px}
